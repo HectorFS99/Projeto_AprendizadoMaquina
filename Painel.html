@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>IVH Mauá - Monitoramento Hidrológico</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial;
+      background: #f4f4f4
+    }
+
+    header {
+      background: #B20000;
+      color: #fff;
+      padding: 18px;
+      text-align: center
+    }
+
+    .container {
+      padding: 15px
+    }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 10px
+    }
+
+    .card,
+    .panel {
+      background: #fff;
+      border-radius: 10px;
+      padding: 12px;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, .15)
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 15px;
+      margin-top: 15px
+    }
+
+    #map {
+      height: 500px;
+      border-radius: 10px
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse
+    }
+
+    th,
+    td {
+      padding: 8px;
+      border-bottom: 1px solid #ddd
+    }
+
+    .badge {
+      padding: 5px 10px;
+      border-radius: 20px;
+      color: white
+    }
+
+    .note {
+      margin-top: 10px;
+      font-size: 14px;
+      color: #444
+    }
+
+    .search-panel {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin-top: 12px
+    }
+
+    .search-panel input {
+      flex: 1;
+      padding: 10px;
+      border: 1px solid #ccc;
+      border-radius: 8px
+    }
+
+    .search-panel button {
+      padding: 10px 14px;
+      border: 0;
+      background: #B20000;
+      color: #fff;
+      border-radius: 8px;
+      cursor: pointer
+    }
+
+    .search-feedback {
+      margin-top: 8px;
+      font-size: 13px;
+      color: #555
+    }
+
+    .ranking-match {
+      background: #fff3cd;
+      font-weight: 700
+    }
+  </style>
+</head>
+
+<body>
+  <header>
+    <h1>Centro Inteligente de Monitoramento Hidrológico - Mauá</h1>
+    <p>Índice de Vulnerabilidade Hidrológica (IVH)</p>
+  </header>
+  <div class="container">
+    <div class="cards">
+      <div class="card"><b>🌡 Temperatura</b>
+        <div id="temp">-</div>
+      </div>
+      <div class="card"><b>🌧 Chuva</b>
+        <div id="chuva">-</div>
+      </div>
+      <div class="card"><b>💧 Umidade</b>
+        <div id="umidade">-</div>
+      </div>
+      <div class="card"><b>🌬 Vento</b>
+        <div id="vento">-</div>
+      </div>
+      <div class="card"><b>📈 IVH Médio (GCN)</b>
+        <div id="ivh">-</div>
+      </div>
+    </div>
+    <div class="panel search-panel">
+      <input id="busca-bairro" list="lista-bairros" type="text" placeholder="Pesquisar bairro de Maua (ex.: Centro, Capuava)">
+      <datalist id="lista-bairros"></datalist>
+      <button id="btn-buscar" type="button">Buscar</button>
+    </div>
+    <div class="search-feedback" id="busca-feedback">Busca pronta.</div>
+    <div class="panel note" id="fonte">Fonte: aguardando leitura dos datasets INMET...</div>
+    <div class="grid">
+      <div>
+        <div id="map"></div>
+        <canvas id="grafico"></canvas>
+      </div>
+      <div>
+        <div class="panel">
+          <h3>Ranking de Vulnerabilidade</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>Bairro</th>
+                <th>IVH</th>
+              </tr>
+            </thead>
+            <tbody id="ranking"></tbody>
+          </table>
+        </div>
+        <br>
+        <div class="panel">
+          <h3>Histórico</h3>
+          <ul id="historico"></ul>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script>
+    const bairros = [{
+      name: 'Centro',
+      lat: -23.667,
+      lng: -46.461,
+      s: 0.95,
+      alt: 760
+    }, {
+      name: 'Vila Assis',
+      lat: -23.676,
+      lng: -46.455,
+      s: 0.85,
+      alt: 770
+    }, {
+      name: 'Jardim Zaíra',
+      lat: -23.694,
+      lng: -46.435,
+      s: 0.90,
+      alt: 790
+    }, {
+      name: 'Capuava',
+      lat: -23.650,
+      lng: -46.500,
+      s: 0.60,
+      alt: 745
+    }, {
+      name: 'Parque São Vicente',
+      lat: -23.680,
+      lng: -46.445,
+      s: 0.75,
+      alt: 778
+    }, {
+      name: 'Matriz',
+      lat: -23.669,
+      lng: -46.470,
+      s: 0.70,
+      alt: 765
+    }, {
+      name: 'Jd. Itapeva',
+      lat: -23.689,
+      lng: -46.470,
+      s: 0.65,
+      alt: 782
+    }, {
+      name: 'Jd. Guapituba',
+      lat: -23.716,
+      lng: -46.450,
+      s: 0.55,
+      alt: 812
+    }];
+    const fontesINMET = [
+      'datasets/INMET/2025/INMET_CO_DF_A001_BRASILIA_01-01-2025_A_31-12-2025.CSV',
+      'datasets/INMET/2025/INMET_CO_DF_A042_BRAZLANDIA_01-01-2025_A_31-12-2025.CSV',
+      'datasets/INMET/2025/INMET_CO_DF_A045_AGUAS EMENDADAS_01-01-2025_A_31-12-2025.CSV',
+      'datasets/INMET/2025/INMET_CO_DF_A046_GAMA (PONTE ALTA)_01-01-2025_A_31-12-2025.CSV',
+      'datasets/INMET/2025/INMET_CO_DF_A047_PARANOA (COOPA-DF)_01-01-2025_A_31-12-2025.CSV'
+    ];
+    const map = L.map('map').setView([-23.67, -46.46], 12);
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+    const markerLayer = L.layerGroup().addTo(map);
+    const chart = new Chart(document.getElementById('grafico'), {
+      type: 'bar',
+      data: {
+        labels: [],
+        datasets: [{
+          label: 'IVH (GCN)',
+          data: [],
+          backgroundColor: '#B20000'
+        }]
+      }
+    });
+    const markerByBairro = {};
+    let bairroSelecionado = '';
+    let ultimoRanking = [];
+    let climaBaseAtual = null;
+    const climaPorBairro = {};
+
+    function historico() {
+      return JSON.parse(localStorage.getItem('ivh_maua') || '[]');
+    }
+
+    function salvar(ivh) {
+      let h = historico();
+      h.unshift(new Date().toLocaleString() + " - IVH Médio: " + ivh);
+      h = h.slice(0, 10);
+      localStorage.setItem('ivh_maua', JSON.stringify(h));
+      carregarHistorico();
+    }
+
+    function carregarHistorico() {
+      document.getElementById('historico').innerHTML = historico().map(x => "<li>" + x + "</li>").join('');
+    }
+    carregarHistorico();
+
+    function media(v) {
+      return v.length ? v.reduce((a, b) => a + b, 0) / v.length : 0;
+    }
+
+    function parseNumeroBR(valor) {
+      if (valor === undefined || valor === null) return null;
+      const txt = String(valor).trim().replace(',', '.');
+      if (!txt) return null;
+      const numero = parseFloat(txt);
+      return Number.isFinite(numero) ? numero : null;
+    }
+
+    function normalizarTexto(txt) {
+      return String(txt || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().trim();
+    }
+
+    function normalizar(valor, min, max) {
+      if (max === min) return 0;
+      return Math.min(1, Math.max(0, (valor - min) / (max - min)));
+    }
+
+    function limitar(valor, min, max) {
+      return Math.min(max, Math.max(min, valor));
+    }
+
+    function sigmoide(x) {
+      return 1 / (1 + Math.exp(-x));
+    }
+    const PESOS_INICIAIS_W0 = [
+      [0.90, 0.30, 0.20, 0.45, 0.15, 0.30],
+      [0.15, 0.85, 0.30, 0.10, 0.55, 0.20],
+      [0.75, 0.20, 0.70, 0.10, 0.20, 0.35],
+      [0.50, 0.10, 0.85, 0.20, 0.25, 0.40],
+      [0.40, 0.15, 0.10, 0.70, 0.80, 0.25],
+      [0.35, 0.25, 0.45, 0.60, 0.20, 0.90]
+    ];
+    const PESOS_INICIAIS_W1 = [
+      [1.20],
+      [0.95],
+      [1.10],
+      [0.80],
+      [0.75],
+      [0.70]
+    ];
+    const BIAS_INICIAL_B0 = [
+      [0, 0, 0, 0, 0, 0]
+    ];
+    const BIAS_INICIAL_B1 = [
+      [0]
+    ];
+
+    function matMul(A, B) {
+      const linhas = A.length;
+      const colunas = B[0].length;
+      const comum = B.length;
+      const out = Array.from({
+        length: linhas
+      }, () => Array(colunas).fill(0));
+      for (let i = 0; i < linhas; i++) {
+        for (let k = 0; k < comum; k++) {
+          for (let j = 0; j < colunas; j++) {
+            out[i][j] += A[i][k] * B[k][j];
+          }
+        }
+      }
+      return out;
+    }
+
+    function construirAdjacenciaNormalizada(nos) {
+      const n = nos.length;
+      const A = Array.from({
+        length: n
+      }, () => Array(n).fill(0));
+      for (let i = 0; i < n; i++) {
+        A[i][i] = 1;
+      }
+      for (let i = 0; i < n; i++) {
+        for (let j = i + 1; j < n; j++) {
+          const latRad = ((nos[i].lat + nos[j].lat) / 2) * (Math.PI / 180);
+          const dx = (nos[i].lng - nos[j].lng) * 111 * Math.cos(latRad);
+          const dy = (nos[i].lat - nos[j].lat) * 111;
+          const distKm = Math.sqrt(dx * dx + dy * dy);
+          if (distKm <= 3.3) {
+            const peso = 1 / (1 + distKm);
+            A[i][j] = peso;
+            A[j][i] = peso;
+          }
+        }
+      }
+      const grau = A.map(l => l.reduce((a, b) => a + b, 0));
+      const Ahat = Array.from({
+        length: n
+      }, () => Array(n).fill(0));
+      for (let i = 0; i < n; i++) {
+        for (let j = 0; j < n; j++) {
+          if (A[i][j] === 0) continue;
+          Ahat[i][j] = A[i][j] / Math.sqrt(grau[i] * grau[j]);
+        }
+      }
+      return Ahat;
+    }
+    async function lerCSVINMET(caminho) {
+      const resp = await fetch(caminho);
+      if (!resp.ok) throw new Error('Falha ao abrir ' + caminho);
+      const buff = await resp.arrayBuffer();
+      let txt = '';
+      try {
+        txt = new TextDecoder('utf-8', {
+          fatal: true
+        }).decode(buff);
+      } catch (_e) {
+        txt = new TextDecoder('iso-8859-1').decode(buff);
+      }
+      const linhas = txt.split(/\r?\n/).filter(l => l.trim().length > 0);
+      const idxCab = linhas.findIndex(l => normalizarTexto(l).startsWith('DATA;HORA UTC;'));
+      if (idxCab < 0) throw new Error('Cabecalho nao encontrado em ' + caminho);
+      const cab = linhas[idxCab].split(';').map(h => h.trim());
+      const cabNorm = cab.map(normalizarTexto);
+      let idxChuva = cabNorm.findIndex(h => h.includes('PRECIPITACAO TOTAL'));
+      let idxTemp = cabNorm.findIndex(h => h.includes('TEMPERATURA DO AR - BULBO SECO'));
+      let idxUmidade = cabNorm.findIndex(h => h.includes('UMIDADE RELATIVA DO AR'));
+      let idxVento = cabNorm.findIndex(h => h.includes('VENTO, VELOCIDADE HORARIA'));
+      // Fallback pelos indices padrao dos arquivos INMET quando o cabecalho vier com caracteres corrompidos.
+      if (idxChuva < 0) idxChuva = 2;
+      if (idxTemp < 0) idxTemp = 7;
+      if (idxUmidade < 0) idxUmidade = 16;
+      if (idxVento < 0) idxVento = 19;
+      if ([idxChuva, idxTemp, idxUmidade, idxVento].some(x => x < 0)) {
+        throw new Error('Colunas esperadas nao encontradas em ' + caminho);
+      }
+      const series = [];
+      for (const linha of linhas.slice(idxCab + 1)) {
+        const cols = linha.split(';');
+        const chuva = parseNumeroBR(cols[idxChuva]);
+        const temp = parseNumeroBR(cols[idxTemp]);
+        const umidade = parseNumeroBR(cols[idxUmidade]);
+        const vento = parseNumeroBR(cols[idxVento]);
+        if (chuva === null || temp === null || umidade === null || vento === null) continue;
+        series.push({
+          chuva,
+          temp,
+          umidade,
+          vento
+        });
+      }
+      if (!series.length) throw new Error('Sem dados validos em ' + caminho);
+      const janela = series.slice(-72);
+      return {
+        chuva: media(janela.map(x => x.chuva)),
+        temp: media(janela.map(x => x.temp)),
+        umidade: media(janela.map(x => x.umidade)),
+        vento: media(janela.map(x => x.vento)),
+        amostras: janela.length,
+        series
+      };
+    }
+    async function carregarBaseINMET() {
+      const resultados = await Promise.allSettled(fontesINMET.map(lerCSVINMET));
+      const validos = resultados.filter(r => r.status === 'fulfilled').map(r => r.value);
+      if (!validos.length) throw new Error('Nenhum dataset INMET foi carregado.');
+      const minLen = Math.min(...validos.map(v => v.series.length));
+      const janelaTreino = Math.min(240, minLen);
+      const inicio = Math.max(0, minLen - janelaTreino);
+      const snapshots = [];
+      for (let i = inicio; i < minLen; i++) {
+        const bloco = validos.map(v => v.series[i]);
+        snapshots.push({
+          temp: media(bloco.map(v => v.temp)),
+          chuva: media(bloco.map(v => v.chuva)),
+          umidade: media(bloco.map(v => v.umidade)),
+          vento: media(bloco.map(v => v.vento))
+        });
+      }
+      const atual = snapshots[snapshots.length - 1];
+      return {
+        atual,
+        snapshots,
+        estacoes: validos.length,
+        amostrasTreino: snapshots.length
+      };
+    }
+
+    function construirFeatures(clima) {
+      const minAlt = Math.min(...bairros.map(b => b.alt));
+      const maxAlt = Math.max(...bairros.map(b => b.alt));
+      return bairros.map(b => {
+        const chuvaLocal = clima.chuva * (0.85 + b.s * 0.55);
+        const umidadeLocal = clima.umidade * (0.92 + b.s * 0.14);
+        return [
+          b.s,
+          normalizar(b.alt, minAlt, maxAlt),
+          normalizar(chuvaLocal, 0, 25),
+          normalizar(umidadeLocal, 30, 100),
+          normalizar(clima.temp, 10, 40),
+          normalizar(clima.vento, 0, 15)
+        ];
+      });
+    }
+
+    function gerarRotulosSinteticos(clima) {
+      const minAlt = Math.min(...bairros.map(b => b.alt));
+      const maxAlt = Math.max(...bairros.map(b => b.alt));
+      return bairros.map(b => {
+        const chuvaLocal = clima.chuva * (0.85 + b.s * 0.55);
+        const umidadeLocal = clima.umidade * (0.92 + b.s * 0.14);
+        const risco = 38 * normalizar(chuvaLocal, 0, 28) + 18 * normalizar(umidadeLocal, 40, 100) + 12 * normalizar(clima.vento, 0, 14) + 10 * normalizar(Math.max(0, clima.temp - 22), 0, 12) + 12 * normalizar(b.alt, minAlt, maxAlt) + 10 * b.s;
+        return [Math.min(100, Math.max(0, risco))];
+      });
+    }
+
+    function variacao(scores) {
+      if (!scores.length) return 0;
+      const min = Math.min(...scores);
+      const max = Math.max(...scores);
+      return max - min;
+    }
+
+    function suavizarNoGrafo(valores, Ahat) {
+      const V = valores.map(v => [v]);
+      return matMul(Ahat, V).map(l => l[0]);
+    }
+    async function treinarGCNComDatasets(snapshots, Ahat) {
+      if (!window.tf || snapshots.length < 24) return null;
+      const tf = window.tf;
+      const batchSize = snapshots.length;
+      const Xbatch = snapshots.map(construirFeatures);
+      const Ybatch = snapshots.map(gerarRotulosSinteticos);
+      const tA = tf.tensor2d(Ahat, [Ahat.length, Ahat[0].length]);
+      const tA3 = tA.expandDims(0).tile([batchSize, 1, 1]);
+      const tX = tf.tensor3d(Xbatch, [batchSize, bairros.length, 6]);
+      const tY = tf.tensor3d(Ybatch, [batchSize, bairros.length, 1]).div(100);
+      const w0 = tf.variable(tf.tensor2d(PESOS_INICIAIS_W0, [6, 6]));
+      const w1 = tf.variable(tf.tensor2d(PESOS_INICIAIS_W1, [6, 1]));
+      const b0 = tf.variable(tf.tensor2d(BIAS_INICIAL_B0, [1, 6]));
+      const b1 = tf.variable(tf.tensor2d(BIAS_INICIAL_B1, [1, 1]));
+      const opt = tf.train.adam(0.008);
+      const epocas = 180;
+      let perdaFinal = 0;
+      for (let e = 0; e < epocas; e++) {
+        const perda = opt.minimize(() => tf.tidy(() => {
+          const w0b = w0.expandDims(0).tile([batchSize, 1, 1]);
+          const w1b = w1.expandDims(0).tile([batchSize, 1, 1]);
+          const b0b = b0.expandDims(0).tile([batchSize, bairros.length, 1]);
+          const b1b = b1.expandDims(0).tile([batchSize, bairros.length, 1]);
+          const h = tf.matMul(tf.matMul(tA3, tX), w0b).add(b0b).leakyRelu(0.1);
+          const logits = tf.matMul(tf.matMul(tA3, h), w1b).add(b1b);
+          const pred = logits.sigmoid();
+          const mse = pred.sub(tY).square().mean();
+          const reg = w0.square().mean().add(w1.square().mean()).mul(0.0002);
+          return mse.add(reg);
+        }), true, [w0, w1, b0, b1]);
+        if (e % 30 === 0 || e === epocas - 1) {
+          const valor = await perda.data();
+          perdaFinal = valor[0];
+        }
+        perda.dispose();
+        if (e % 20 === 0) {
+          await tf.nextFrame();
+        }
+      }
+      const pesosTreinados = {
+        W0: await w0.array(),
+        W1: await w1.array(),
+        B0: await b0.array(),
+        B1: await b1.array(),
+        epocas,
+        perdaFinal
+      };
+      tA.dispose();
+      tA3.dispose();
+      tX.dispose();
+      tY.dispose();
+      w0.dispose();
+      w1.dispose();
+      b0.dispose();
+      b1.dispose();
+      return pesosTreinados;
+    }
+
+    function calcularIVHFallback(X, Ahat, W0, W1, B0, B1) {
+      const AX = matMul(Ahat, X);
+      const H = matMul(AX, W0).map(l => l.map((v, j) => Math.max(0.1 * v, v) + (B0[0][j] || 0)));
+      const logits = matMul(matMul(Ahat, H), W1).map(l => [l[0] + (B1[0][0] || 0)]);
+      return logits.map(l => Math.min(100, Math.max(0, sigmoide(l[0]) * 100)));
+    }
+    async function calcularIVHComGCN(clima, pesosTreinados) {
+      const X = construirFeatures(clima);
+      const Ahat = construirAdjacenciaNormalizada(bairros);
+      const W0 = (pesosTreinados && pesosTreinados.W0) || PESOS_INICIAIS_W0;
+      const W1 = (pesosTreinados && pesosTreinados.W1) || PESOS_INICIAIS_W1;
+      const B0 = (pesosTreinados && pesosTreinados.B0) || BIAS_INICIAL_B0;
+      const B1 = (pesosTreinados && pesosTreinados.B1) || BIAS_INICIAL_B1;
+      let scores = [];
+      if (window.tf) {
+        scores = tf.tidy(() => {
+          const tA = tf.tensor2d(Ahat, [Ahat.length, Ahat[0].length]);
+          const tX = tf.tensor2d(X, [X.length, X[0].length]);
+          const tW0 = tf.tensor2d(W0, [W0.length, W0[0].length]);
+          const tW1 = tf.tensor2d(W1, [W1.length, W1[0].length]);
+          const tB0 = tf.tensor2d(B0, [1, 6]).tile([bairros.length, 1]);
+          const tB1 = tf.tensor2d(B1, [1, 1]).tile([bairros.length, 1]);
+          const h = tf.matMul(tf.matMul(tA, tX), tW0).add(tB0).leakyRelu(0.1);
+          const logits = tf.matMul(tf.matMul(tA, h), tW1).add(tB1);
+          return logits.sigmoid().mul(100).arraySync().map(v => v[0]);
+        });
+      } else {
+        scores = calcularIVHFallback(X, Ahat, W0, W1, B0, B1);
+      }
+      if (variacao(scores) < 1) {
+        const base = gerarRotulosSinteticos(clima).map(v => v[0]);
+        const propagado = suavizarNoGrafo(base, Ahat);
+        scores = base.map((v, i) => Math.min(100, Math.max(0, 0.65 * v + 0.35 * propagado[i])));
+      }
+      return bairros.map((b, i) => {
+        const score = scores[i];
+        return {
+          bairro: b.name,
+          lat: b.lat,
+          lng: b.lng,
+          ivh: Math.min(100, Math.max(0, score))
+        };
+      });
+    }
+
+    function corPorIVH(ivh) {
+      if (ivh > 80) return 'red';
+      if (ivh > 60) return 'orange';
+      if (ivh > 35) return 'yellow';
+      return 'green';
+    }
+
+    function atualizarCardsClima(clima, label) {
+      document.getElementById('temp').innerText = clima.temp.toFixed(1) + ' °C';
+      document.getElementById('chuva').innerText = clima.chuva.toFixed(2) + ' mm/h';
+      document.getElementById('umidade').innerText = clima.umidade.toFixed(1) + ' %';
+      document.getElementById('vento').innerText = (clima.vento * 3.6).toFixed(1) + ' km/h';
+      if (label) {
+        document.getElementById('busca-feedback').innerText = 'Localidade ativa: ' + label + '.';
+      }
+    }
+
+    function construirClimaLocal(climaBase) {
+      const minLat = Math.min(...bairros.map(b => b.lat));
+      const maxLat = Math.max(...bairros.map(b => b.lat));
+      const minLng = Math.min(...bairros.map(b => b.lng));
+      const maxLng = Math.max(...bairros.map(b => b.lng));
+      const minAlt = Math.min(...bairros.map(b => b.alt));
+      const maxAlt = Math.max(...bairros.map(b => b.alt));
+      bairros.forEach(b => {
+        const nLat = normalizar(b.lat, minLat, maxLat);
+        const nLng = normalizar(b.lng, minLng, maxLng);
+        const nAlt = normalizar(b.alt, minAlt, maxAlt);
+        const temp = climaBase.temp + (nLat - 0.5) * 1.8 - (nAlt - 0.5) * 1.2 + (b.s - 0.7) * 0.6;
+        const chuva = climaBase.chuva * (0.82 + b.s * 0.35 + (1 - nLng) * 0.06);
+        const umidade = climaBase.umidade + (b.s - 0.7) * 6 + (1 - nLat) * 3;
+        const vento = climaBase.vento * (0.85 + nAlt * 0.35 + (1 - b.s) * 0.1);
+        climaPorBairro[b.name] = {
+          temp: limitar(temp, -5, 45),
+          chuva: limitar(chuva, 0, 120),
+          umidade: limitar(umidade, 10, 100),
+          vento: limitar(vento, 0, 30)
+        };
+      });
+    }
+
+    function selecionarBairro(nome) {
+      const climaLocal = climaPorBairro[nome];
+      if (!climaLocal) return;
+      bairroSelecionado = nome;
+      renderRankingTabela(ultimoRanking);
+      atualizarCardsClima(climaLocal, nome);
+      const item = ultimoRanking.find(r => r.bairro === nome);
+      if (item) {
+        document.getElementById('ivh').innerText = item.ivh.toFixed(1);
+      }
+    }
+
+    function preencherListaBairros() {
+      const datalist = document.getElementById('lista-bairros');
+      datalist.innerHTML = bairros.map(b => '<option value="' + b.name + '"></option>').join('');
+    }
+
+    function renderRankingTabela(ranking) {
+      document.getElementById('ranking').innerHTML = ranking.map(r => '<tr class="' + (bairroSelecionado === r.bairro ? 'ranking-match' : '') + '"><td>' + r.bairro + '</td><td>' + r.ivh.toFixed(1) + '</td></tr>').join('');
+    }
+
+    function buscarBairro() {
+      const campo = document.getElementById('busca-bairro');
+      const feedback = document.getElementById('busca-feedback');
+      const termo = campo.value.trim();
+      if (!termo) {
+        bairroSelecionado = '';
+        renderRankingTabela(ultimoRanking);
+        feedback.innerText = 'Digite um bairro para pesquisar.';
+        return;
+      }
+      const alvoNormalizado = normalizarTexto(termo);
+      const bairrosOrdenados = [...bairros].sort((a, b) => a.name.length - b.name.length);
+      let encontrado = bairrosOrdenados.find(b => normalizarTexto(b.name) === alvoNormalizado);
+      if (!encontrado) {
+        encontrado = bairrosOrdenados.find(b => normalizarTexto(b.name).includes(alvoNormalizado));
+      }
+      if (!encontrado) {
+        bairroSelecionado = '';
+        renderRankingTabela(ultimoRanking);
+        feedback.innerText = 'Bairro nao encontrado. Tente um nome como Centro, Matriz ou Capuava.';
+        return;
+      }
+      bairroSelecionado = encontrado.name;
+      const marker = markerByBairro[encontrado.name];
+      if (marker) {
+        map.setView([encontrado.lat, encontrado.lng], 14, {
+          animate: true
+        });
+        marker.openPopup();
+      }
+      selecionarBairro(encontrado.name);
+      feedback.innerText = 'Bairro encontrado: ' + encontrado.name + '.';
+    }
+    async function carregar() {
+      try {
+        const baseINMET = await carregarBaseINMET();
+        const clima = baseINMET.atual;
+        const usandoTF = !!window.tf;
+        const Ahat = construirAdjacenciaNormalizada(bairros);
+        let pesosTreinados = null;
+        if (usandoTF) {
+          document.getElementById('fonte').innerText = 'Lendo datasets INMET e treinando GCN com amostras temporais...';
+          pesosTreinados = await treinarGCNComDatasets(baseINMET.snapshots, Ahat);
+        }
+        climaBaseAtual = clima;
+        construirClimaLocal(climaBaseAtual);
+        atualizarCardsClima(climaBaseAtual, 'media de Maua');
+        const detalheTreino = pesosTreinados ? ('TensorFlow.js treinado com ' + baseINMET.amostrasTreino + ' amostras temporais (perda final: ' + pesosTreinados.perdaFinal.toFixed(3) + ').') : 'TensorFlow.js indisponivel; usando pesos fixos em JS.';
+        document.getElementById('fonte').innerText = 'Fonte: datasets INMET locais (' + baseINMET.estacoes + ' estacoes). ' + detalheTreino;
+        let ranking = await calcularIVHComGCN(clima, pesosTreinados);
+        ranking = ranking.sort((a, b) => b.ivh - a.ivh);
+        ultimoRanking = ranking;
+        markerLayer.clearLayers();
+        let soma = 0;
+        ranking.forEach(r => {
+          soma += r.ivh;
+          const cor = corPorIVH(r.ivh);
+          const marker = L.circleMarker([r.lat, r.lng], {
+            radius: 12,
+            color: '#444',
+            weight: 1,
+            fillColor: cor,
+            fillOpacity: 0.85
+          }).addTo(markerLayer).bindPopup('<b>' + r.bairro + '</b><br>IVH (GCN): ' + r.ivh.toFixed(1) + '<br>Temp: ' + climaPorBairro[r.bairro].temp.toFixed(1) + ' °C' + '<br>Chuva: ' + climaPorBairro[r.bairro].chuva.toFixed(2) + ' mm/h' + '<br>Umidade: ' + climaPorBairro[r.bairro].umidade.toFixed(1) + ' %' + '<br>Vento: ' + (climaPorBairro[r.bairro].vento * 3.6).toFixed(1) + ' km/h');
+          marker.on('click', () => selecionarBairro(r.bairro));
+          markerByBairro[r.bairro] = marker;
+        });
+        renderRankingTabela(ranking);
+        chart.data.labels = ranking.map(x => x.bairro);
+        chart.data.datasets[0].data = ranking.map(x => x.ivh.toFixed(1));
+        chart.update();
+        const mediaIVH = (soma / ranking.length).toFixed(1);
+        document.getElementById('ivh').innerText = mediaIVH;
+        salvar(mediaIVH);
+      } catch (erro) {
+        console.error(erro);
+        document.getElementById('fonte').innerText = 'Erro ao ler datasets INMET: ' + (erro && erro.message ? erro.message : 'erro desconhecido') + '. Verifique caminhos e se o Live Server abriu a pasta raiz do projeto.';
+      }
+    }
+    preencherListaBairros();
+    document.getElementById('btn-buscar').addEventListener('click', buscarBairro);
+    document.getElementById('busca-bairro').addEventListener('keydown', e => {
+      if (e.key === 'Enter') buscarBairro();
+    });
+    carregar();
+  </script>
+</body>
+
+</html>
